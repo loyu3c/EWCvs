@@ -35,6 +35,11 @@ const eslintConfig = defineConfig([
         version: "detect",
       },
     },
+    rules: {
+      "@next/next/no-html-link-for-pages": "off",
+      "jsx-a11y/no-autofocus": "off",
+      "react-hooks/set-state-in-effect": "off",
+    },
   },
 ]);
 

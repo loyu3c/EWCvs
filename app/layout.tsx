@@ -1,13 +1,6 @@
 import type { Metadata } from "next";
-import { Noto_Sans_TC } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
-
-const notoSans = Noto_Sans_TC({
-  variable: "--font-noto-sans-tc",
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -36,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-Hant">
-      <body className={notoSans.variable}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
        AND candidate.department = voter.department
        AND candidate.unit = voter.unit
      WHERE voter.id = ?`,
-  ).bind(body.candidateId, session.employeeId).first<{ voter_id: number; candidate_id: number }>();
+  ).bind(body.candidateId!, session.employeeId).first<{ voter_id: number; candidate_id: number }>();
   if (!match) return error("候選人不屬於您的部門單位", 400);
 
   const receiptCode = crypto.randomUUID().split("-")[0].toUpperCase();
@@ -30,6 +30,10 @@ export async function POST(request: Request) {
     ).bind(match.voter_id, match.candidate_id, receiptCode, new Date().toISOString()).run();
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "";
+    const postgresCode = typeof caught === "object" && caught !== null && "code" in caught
+      ? String(caught.code)
+      : "";
+    if (postgresCode === "23505") return error("此員工編號已完成投票", 409);
     if (message.includes("UNIQUE")) return error("此員工編號已完成投票", 409);
     throw caught;
   }

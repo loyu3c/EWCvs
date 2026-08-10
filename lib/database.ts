@@ -1,36 +1,155 @@
-import { env } from "cloudflare:workers";
+import postgres from "postgres";
 
-export interface D1Result<T = Record<string, unknown>> {
+export interface DatabaseResult<T = Record<string, unknown>> {
   success: boolean;
   results?: T[];
   meta?: { changes?: number };
 }
 
-export interface D1Statement {
-  bind(...values: unknown[]): D1Statement;
-  run<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+type DatabaseValue = string | number | boolean | null | Date;
+
+export interface DatabaseStatement {
+  bind(...values: DatabaseValue[]): DatabaseStatement;
+  run<T = Record<string, unknown>>(): Promise<DatabaseResult<T>>;
   first<T = Record<string, unknown>>(): Promise<T | null>;
-  all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  all<T = Record<string, unknown>>(): Promise<DatabaseResult<T>>;
 }
 
-export interface D1DatabaseLike {
-  prepare(sql: string): D1Statement;
-  batch<T = D1Result>(statements: D1Statement[]): Promise<T[]>;
+export interface DatabaseLike {
+  prepare(sql: string): DatabaseStatement;
+  batch<T = DatabaseResult>(statements: DatabaseStatement[]): Promise<T[]>;
 }
 
 type RuntimeBindings = {
-  DB?: D1DatabaseLike;
   ADMIN_PASSWORD?: string;
   SESSION_SECRET?: string;
 };
 
 export function getBindings(): RuntimeBindings {
-  return env as unknown as RuntimeBindings;
+  return {
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    SESSION_SECRET: process.env.SESSION_SECRET,
+  };
 }
 
-export function getDatabase(): D1DatabaseLike {
-  const database = getBindings().DB;
-  if (!database) throw new Error("投票資料庫尚未設定");
+const connectionString =
+  process.env.DATABASE_URL ??
+  process.env.POSTGRES_CONNECTION_STRING ??
+  process.env.POSTGRES_URI;
+
+const client = connectionString
+  ? postgres(connectionString, {
+      max: 10,
+      idle_timeout: 20,
+      connect_timeout: 15,
+      prepare: false,
+    })
+  : null;
+
+const normalizedKeys: Record<string, string> = {
+  createdat: "createdAt",
+  employeenumber: "employeeNumber",
+  passwordhash: "passwordHash",
+  passwordsalt: "passwordSalt",
+  sessionversion: "sessionVersion",
+  testemployees: "testEmployees",
+  updatedat: "updatedAt",
+};
+
+const numericKeys = new Set([
+  "candidate_id",
+  "count",
+  "employees",
+  "id",
+  "iterations",
+  "sessionversion",
+  "testemployees",
+  "total",
+  "voted",
+  "voter_id",
+  "votes",
+]);
+
+function normalizeRow<T>(row: Record<string, unknown>): T {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      normalizedKeys[key] ?? key,
+      numericKeys.has(key) && typeof value === "string" ? Number(value) : value,
+    ]),
+  ) as T;
+}
+
+function postgresQuery(sql: string) {
+  let parameter = 0;
+  return sql.replace(/\?/g, () => `$${++parameter}`);
+}
+
+class PostgresStatement implements DatabaseStatement {
+  readonly sql: string;
+  readonly values: DatabaseValue[];
+
+  constructor(sql: string, values: DatabaseValue[] = []) {
+    this.sql = postgresQuery(sql);
+    this.values = values;
+  }
+
+  bind(...values: DatabaseValue[]) {
+    return new PostgresStatement(this.sql, values);
+  }
+
+  async run<T = Record<string, unknown>>(): Promise<DatabaseResult<T>> {
+    const rows = await execute(this);
+    return { success: true, results: rows.map(normalizeRow<T>), meta: { changes: rows.count } };
+  }
+
+  async first<T = Record<string, unknown>>(): Promise<T | null> {
+    const rows = await execute(this);
+    return rows[0] ? normalizeRow<T>(rows[0]) : null;
+  }
+
+  async all<T = Record<string, unknown>>(): Promise<DatabaseResult<T>> {
+    const rows = await execute(this);
+    return { success: true, results: rows.map(normalizeRow<T>) };
+  }
+}
+
+function requireClient() {
+  if (!client) {
+    throw new Error(
+      "Database connection is unavailable. Set DATABASE_URL to the Zeabur PostgreSQL connection string.",
+    );
+  }
+  return client;
+}
+
+function execute(statement: PostgresStatement) {
+  return requireClient().unsafe<Record<string, unknown>[]>(statement.sql, statement.values);
+}
+
+const database: DatabaseLike = {
+  prepare(sql: string) {
+    return new PostgresStatement(sql);
+  },
+  async batch<T = DatabaseResult>(statements: DatabaseStatement[]): Promise<T[]> {
+    const committed = await requireClient().begin(async (transaction) => {
+      const results: DatabaseResult[] = [];
+      for (const item of statements) {
+        const statement = item as PostgresStatement;
+        const rows = await transaction.unsafe<Record<string, unknown>[]>(statement.sql, statement.values);
+        results.push({
+          success: true,
+          results: rows.map((row) => normalizeRow<Record<string, unknown>>(row)),
+          meta: { changes: rows.count },
+        });
+      }
+      return results;
+    });
+    return committed as unknown as T[];
+  },
+};
+
+export function getDatabase(): DatabaseLike {
+  requireClient();
   return database;
 }
 
@@ -50,7 +169,7 @@ async function initializeSchema() {
   const db = getDatabase();
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS employees (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       employee_number TEXT NOT NULL,
       department TEXT NOT NULL,
@@ -61,13 +180,11 @@ async function initializeSchema() {
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_employee_number ON employees(employee_number)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_employees_department_unit ON employees(department, unit)"),
     db.prepare(`CREATE TABLE IF NOT EXISTS votes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      voter_employee_id INTEGER NOT NULL UNIQUE,
-      candidate_employee_id INTEGER NOT NULL,
+      id BIGSERIAL PRIMARY KEY,
+      voter_employee_id BIGINT NOT NULL UNIQUE REFERENCES employees(id),
+      candidate_employee_id BIGINT NOT NULL REFERENCES employees(id),
       receipt_code TEXT NOT NULL UNIQUE,
-      cast_at TEXT NOT NULL,
-      FOREIGN KEY(voter_employee_id) REFERENCES employees(id),
-      FOREIGN KEY(candidate_employee_id) REFERENCES employees(id)
+      cast_at TEXT NOT NULL
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_votes_candidate ON votes(candidate_employee_id)"),
     db.prepare(`CREATE TABLE IF NOT EXISTS election_settings (
@@ -77,7 +194,7 @@ async function initializeSchema() {
       updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       action TEXT NOT NULL,
       details TEXT,
       created_at TEXT NOT NULL
@@ -93,9 +210,10 @@ async function initializeSchema() {
     )`),
   ]);
   await db.prepare(
-    "INSERT OR IGNORE INTO election_settings (id, title, status, updated_at) VALUES (1, ?, 'setup', ?)",
-  ).bind("2026 年福委改選", new Date().toISOString()).run();
-  await db.prepare("PRAGMA optimize").run();
+    `INSERT INTO election_settings (id, title, status, updated_at)
+     VALUES (1, ?, 'setup', ?)
+     ON CONFLICT (id) DO NOTHING`,
+  ).bind("2026 年度福委改選", new Date().toISOString()).run();
 }
 
 export async function addAudit(action: string, details?: string) {
