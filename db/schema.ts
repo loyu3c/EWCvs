@@ -36,6 +36,15 @@ export const electionSettings = sqliteTable("election_settings", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const adminCredentials = sqliteTable("admin_credentials", {
+  id: integer("id").primaryKey(),
+  passwordHash: text("password_hash").notNull(),
+  passwordSalt: text("password_salt").notNull(),
+  iterations: integer("iterations").notNull(),
+  sessionVersion: integer("session_version").notNull().default(1),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const auditLogs = sqliteTable(
   "audit_logs",
   {

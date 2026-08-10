@@ -10,8 +10,10 @@ export async function GET(request: Request) {
     db.prepare("SELECT title, status, updated_at AS updatedAt FROM election_settings WHERE id = 1")
       .first<{ title: string; status: string; updatedAt: string }>(),
     db.prepare(
-      "SELECT (SELECT COUNT(*) FROM employees) AS employees, (SELECT COUNT(*) FROM votes) AS votes",
-    ).first<{ employees: number; votes: number }>(),
+      `SELECT (SELECT COUNT(*) FROM employees) AS employees,
+        (SELECT COUNT(*) FROM votes) AS votes,
+        (SELECT COUNT(*) FROM employees WHERE employee_number LIKE 'TEST%') AS testEmployees`,
+    ).first<{ employees: number; votes: number; testEmployees: number }>(),
     db.prepare(
       `SELECT e.department, e.unit, COUNT(*) AS total,
         SUM(CASE WHEN v.id IS NOT NULL THEN 1 ELSE 0 END) AS voted
@@ -39,7 +41,7 @@ export async function GET(request: Request) {
 
   return json({
     settings,
-    totals: totals ?? { employees: 0, votes: 0 },
+    totals: totals ?? { employees: 0, votes: 0, testEmployees: 0 },
     units: units.results ?? [],
     candidates: (candidates.results ?? []).map((candidate) => ({
       ...candidate,

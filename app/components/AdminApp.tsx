@@ -7,7 +7,7 @@ type Status = "setup" | "open" | "paused" | "closed";
 type ImportRow = { name: string; employeeNumber: string; department: string; unit: string; incumbent: boolean };
 type Dashboard = {
   settings: { title: string; status: Status; updatedAt: string };
-  totals: { employees: number; votes: number };
+  totals: { employees: number; votes: number; testEmployees: number };
   units: { department: string; unit: string; total: number; voted: number }[];
   candidates: {
     id: number; name: string; employeeNumber: string; department: string; unit: string; incumbent: boolean; votes: number;
@@ -36,7 +36,13 @@ export function AdminApp() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [activePanel, setActivePanel] = useState<"overview" | "import" | "results" | "logs">("overview");
+  const [activePanel, setActivePanel] = useState<"overview" | "import" | "results" | "logs" | "tools">("overview");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordChanged, setPasswordChanged] = useState(false);
+  const [resetScope, setResetScope] = useState<"test" | "all" | null>(null);
+  const [resetConfirmation, setResetConfirmation] = useState("");
 
   const loadDashboard = useCallback(async (silent = false) => {
     try {
@@ -112,6 +118,47 @@ export function AdminApp() {
     finally { setBusy(false); }
   };
 
+  const changePassword = async (event: FormEvent) => {
+    event.preventDefault(); setError(""); setMessage("");
+    if (newPassword !== confirmPassword) { setError("兩次輸入的新密碼不一致"); return; }
+    setBusy(true);
+    try {
+      await readJson(await fetch("/api/admin/password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      }));
+      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
+      setPasswordChanged(true); setDashboard(null); setAuthenticated(false);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "密碼修改失敗"); }
+    finally { setBusy(false); }
+  };
+
+  const generateTestData = async () => {
+    if (!window.confirm("確定要產生 100 筆測試員工資料嗎？")) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const data = await readJson(await fetch("/api/admin/test-data", { method: "POST" }));
+      setMessage(`已產生 ${data.count} 筆測試資料`); await loadDashboard();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "測試資料產生失敗"); }
+    finally { setBusy(false); }
+  };
+
+  const resetData = async () => {
+    if (!resetScope) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const data = await readJson(await fetch("/api/admin/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: resetScope, confirmation: resetConfirmation }),
+      }));
+      setMessage(resetScope === "test" ? `已清除 ${data.count} 筆測試資料` : `已清除全部 ${data.count} 筆員工資料`);
+      setResetScope(null); setResetConfirmation(""); await loadDashboard();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "資料清除失敗"); }
+    finally { setBusy(false); }
+  };
+
   const groupedResults = useMemo(() => {
     const groups = new Map<string, Dashboard["candidates"]>();
     for (const candidate of dashboard?.candidates ?? []) {
@@ -148,6 +195,7 @@ export function AdminApp() {
         <p className="eyebrow">ADMINISTRATION</p>
         <h1>管理者登入</h1>
         <p>請輸入管理密碼，進入名單、投票與開票管理。</p>
+        {passwordChanged && <div className="login-success">密碼已更新，請使用新密碼重新登入。</div>}
         <label><span>管理密碼</span><input type="password" autoFocus required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="輸入管理密碼" /></label>
         {error && <p className="form-error">{error}</p>}
         <button className="primary-button full-button" disabled={busy}>{busy ? "登入中…" : "進入管理後台"}</button>
@@ -168,6 +216,7 @@ export function AdminApp() {
           <button className={activePanel === "import" ? "active" : ""} onClick={() => setActivePanel("import")}><span>⇧</span>名單匯入</button>
           <button className={activePanel === "results" ? "active" : ""} onClick={() => setActivePanel("results")}><span>▥</span>即時票數</button>
           <button className={activePanel === "logs" ? "active" : ""} onClick={() => setActivePanel("logs")}><span>≡</span>操作紀錄</button>
+          <button className={activePanel === "tools" ? "active" : ""} onClick={() => setActivePanel("tools")}><span>⚙</span>系統工具</button>
         </nav>
         <div className="sidebar-bottom">
           <a href="/" target="_blank">開啟投票頁 ↗</a>
@@ -250,10 +299,67 @@ export function AdminApp() {
         {activePanel === "logs" && dashboard && (
           <section className="admin-card">
             <div className="panel-heading"><div><p className="section-kicker">AUDIT TRAIL</p><h2>操作紀錄</h2><p>記錄名單匯入、狀態調整與投票送出，不在此顯示投票內容。</p></div></div>
-            <div className="log-list">{dashboard.logs.map((log, index) => <div className="log-item" key={`${log.createdAt}-${index}`}><span className="log-dot" /><div><strong>{log.action === "employee_import" ? "匯入員工名單" : log.action === "status_change" ? "調整投票狀態" : "收到一張選票"}</strong><small>{new Date(log.createdAt).toLocaleString("zh-TW", { hour12: false })}</small></div><span>{log.action === "vote_cast" ? "投票成功" : log.details}</span></div>)}</div>
+            <div className="log-list">{dashboard.logs.map((log, index) => {
+              const actionLabel: Record<string, string> = {
+                employee_import: "匯入員工名單", status_change: "調整投票狀態", vote_cast: "收到一張選票",
+                admin_password_changed: "修改管理密碼", test_data_generated: "產生測試資料",
+                test_data_cleared: "清空測試資料", all_data_cleared: "清空全部資料",
+              };
+              return <div className="log-item" key={`${log.createdAt}-${index}`}><span className="log-dot" /><div><strong>{actionLabel[log.action] ?? log.action}</strong><small>{new Date(log.createdAt).toLocaleString("zh-TW", { hour12: false })}</small></div><span>{log.action === "vote_cast" ? "投票成功" : log.details}</span></div>;
+            })}</div>
           </section>
         )}
+
+        {activePanel === "tools" && dashboard && (
+          <div className="admin-panel-stack">
+            <section className="results-header tools-header">
+              <div><p className="section-kicker">SYSTEM TOOLS</p><h2>系統工具</h2><p>管理後台密碼、建立測試名單，以及安全地重設選舉資料。</p></div>
+            </section>
+            <div className="tools-grid">
+              <form className="admin-card tool-card" onSubmit={changePassword}>
+                <span className="tool-index">01</span>
+                <div><p className="section-kicker">ACCOUNT SECURITY</p><h2>修改後台密碼</h2><p>修改後，所有已登入的管理者都必須使用新密碼重新登入。</p></div>
+                <label><span>目前密碼</span><input type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+                <label><span>新密碼</span><input type="password" required minLength={12} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="至少 12 字元，包含英文與數字" /></label>
+                <label><span>再次輸入新密碼</span><input type="password" required minLength={12} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
+                <button className="primary-button" disabled={busy}>儲存新密碼</button>
+              </form>
+
+              <section className="admin-card tool-card">
+                <span className="tool-index">02</span>
+                <div><p className="section-kicker">TEST DATA</p><h2>測試資料</h2><p>在空白名單中建立 100 位測試員工，分布於 5 個部門、10 個單位。</p></div>
+                <div className="tool-summary"><span>目前測試資料</span><strong>{dashboard.totals.testEmployees}<small> 筆</small></strong></div>
+                <button className="primary-button" disabled={busy || dashboard.settings.status === "open" || dashboard.totals.employees > 0} onClick={generateTestData}>產生 100 筆測試資料</button>
+                {dashboard.totals.employees > 0 && <p className="tool-hint">名單已有資料；清空後才能產生測試資料。</p>}
+                <button className="secondary-button" disabled={busy || dashboard.settings.status === "open" || dashboard.totals.testEmployees === 0} onClick={() => { setResetScope("test"); setResetConfirmation(""); }}>清空測試資料</button>
+              </section>
+
+              <section className="admin-card tool-card danger-card">
+                <span className="tool-index">03</span>
+                <div><p className="section-kicker">DANGER ZONE</p><h2>清空全部資料</h2><p>刪除所有員工名單、選票與操作紀錄，並將選舉重設為籌備中。</p></div>
+                <div className="danger-note">此動作無法復原。正式資料清除前，請先匯出開票結果。</div>
+                <button className="danger-button" disabled={busy || dashboard.settings.status === "open" || dashboard.totals.employees === 0} onClick={() => { setResetScope("all"); setResetConfirmation(""); }}>清空全部資料</button>
+                {dashboard.settings.status === "open" && <p className="tool-hint">請先暫停或結束投票。</p>}
+              </section>
+            </div>
+          </div>
+        )}
       </section>
+
+      {resetScope && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="confirm-modal reset-modal" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+            <p className="eyebrow">DESTRUCTIVE ACTION</p>
+            <h2 id="reset-title">{resetScope === "test" ? "清空測試資料？" : "清空全部資料？"}</h2>
+            <p>{resetScope === "test" ? "所有 TEST 開頭的員工及相關選票將被刪除。" : "所有員工、選票與統計資料都將被永久刪除。"}</p>
+            <label><span>請輸入「{resetScope === "test" ? "清空測試資料" : "清空全部資料"}」確認</span><input autoFocus value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label>
+            <div className="modal-actions">
+              <button className="secondary-button" disabled={busy} onClick={() => { setResetScope(null); setResetConfirmation(""); }}>取消</button>
+              <button className="danger-button" disabled={busy || resetConfirmation !== (resetScope === "test" ? "清空測試資料" : "清空全部資料")} onClick={resetData}>{busy ? "處理中…" : "確認清空"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

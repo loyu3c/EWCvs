@@ -83,6 +83,14 @@ async function initializeSchema() {
       created_at TEXT NOT NULL
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS admin_credentials (
+      id INTEGER PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      iterations INTEGER NOT NULL,
+      session_version INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    )`),
   ]);
   await db.prepare(
     "INSERT OR IGNORE INTO election_settings (id, title, status, updated_at) VALUES (1, ?, 'setup', ?)",

@@ -1,8 +1,9 @@
-import { getBindings } from "./database";
+import { getBindings, getDatabase } from "./database";
 
 type SessionPayload = {
   kind: "voter" | "admin";
   employeeId?: number;
+  adminVersion?: number;
   exp: number;
 };
 
@@ -78,7 +79,9 @@ export async function getVoterSession(request: Request) {
 
 export async function getAdminSession(request: Request) {
   const session = await verifySession(readCookie(request, "admin_session"));
-  return session?.kind === "admin" ? session : null;
+  if (session?.kind !== "admin") return null;
+  const currentVersion = await getAdminCredentialVersion();
+  return (session.adminVersion ?? 0) === currentVersion ? session : null;
 }
 
 export function sessionCookie(name: string, value: string, maxAge = 28800) {
@@ -90,6 +93,13 @@ export function clearCookie(name: string) {
 }
 
 export async function passwordMatches(input: string) {
+  const credential = await getDatabase().prepare(
+    "SELECT password_hash AS passwordHash, password_salt AS passwordSalt, iterations FROM admin_credentials WHERE id = 1",
+  ).first<{ passwordHash: string; passwordSalt: string; iterations: number }>();
+  if (credential) {
+    const actual = await derivePasswordHash(input, credential.passwordSalt, credential.iterations);
+    return constantTimeEqual(actual, credential.passwordHash);
+  }
   const expected = getBindings().ADMIN_PASSWORD ?? "ewc-demo-admin";
   const [actualHash, expectedHash] = await Promise.all([
     crypto.subtle.digest("SHA-256", encoder.encode(input)),
@@ -102,4 +112,65 @@ export async function passwordMatches(input: string) {
     difference |= actual[index] ^ reference[index];
   }
   return difference === 0;
+}
+
+const passwordIterations = 120000;
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  return toBase64Url(bytes);
+}
+
+function base64UrlToBytes(value: string) {
+  return fromBase64Url(value);
+}
+
+function constantTimeEqual(actual: string, expected: string) {
+  const actualBytes = encoder.encode(actual);
+  const expectedBytes = encoder.encode(expected);
+  let difference = actualBytes.length ^ expectedBytes.length;
+  for (let index = 0; index < Math.min(actualBytes.length, expectedBytes.length); index += 1) {
+    difference |= actualBytes[index] ^ expectedBytes[index];
+  }
+  return difference === 0;
+}
+
+async function derivePasswordHash(password: string, salt: string, iterations: number) {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: base64UrlToBytes(salt), iterations },
+    keyMaterial,
+    256,
+  );
+  return bytesToBase64Url(new Uint8Array(bits));
+}
+
+export async function getAdminCredentialVersion() {
+  const credential = await getDatabase().prepare(
+    "SELECT session_version AS sessionVersion FROM admin_credentials WHERE id = 1",
+  ).first<{ sessionVersion: number }>();
+  return credential?.sessionVersion ?? 0;
+}
+
+export async function updateAdminPassword(newPassword: string) {
+  const saltBytes = new Uint8Array(18);
+  crypto.getRandomValues(saltBytes);
+  const salt = bytesToBase64Url(saltBytes);
+  const passwordHash = await derivePasswordHash(newPassword, salt, passwordIterations);
+  const currentVersion = await getAdminCredentialVersion();
+  await getDatabase().prepare(
+    `INSERT INTO admin_credentials (id, password_hash, password_salt, iterations, session_version, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       password_hash = excluded.password_hash,
+       password_salt = excluded.password_salt,
+       iterations = excluded.iterations,
+       session_version = excluded.session_version,
+       updated_at = excluded.updated_at`,
+  ).bind(passwordHash, salt, passwordIterations, currentVersion + 1, new Date().toISOString()).run();
 }
