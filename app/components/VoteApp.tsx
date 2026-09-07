@@ -6,7 +6,7 @@ type ElectionStatus = "setup" | "open" | "paused" | "closed";
 type Department = { name: string; units: { name: string; employeeNumbers: string[] }[] };
 type Options = { election: { title: string; status: ElectionStatus }; departments: Department[] };
 type Candidate = { id: number; name: string; employeeNumber: string; incumbent: boolean };
-type Voter = { name: string; department: string; unit: string; hasVoted: boolean };
+type Voter = { name: string; department: string; unit: string; electionGroup: string; hasVoted: boolean };
 
 const statusCopy: Record<ElectionStatus, { label: string; message: string }> = {
   setup: { label: "籌備中", message: "名單正在準備，投票入口尚未開放。" },
@@ -150,7 +150,7 @@ export function VoteApp() {
               <div>
                 <p className="eyebrow">STEP 2 OF 2 · CAST YOUR VOTE</p>
                 <h2>選擇一位候選人</h2>
-                <p>{voter.department}・{voter.unit}｜投票人：{voter.name}</p>
+                <p>{voter.department}・{voter.unit}｜選舉分組：{voter.electionGroup}｜投票人：{voter.name}</p>
               </div>
               <span className="choice-count">單選 1 人</span>
             </div>
