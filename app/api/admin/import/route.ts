@@ -7,6 +7,7 @@ type ImportRow = {
   employeeNumber?: string;
   department?: string;
   unit?: string;
+  electionGroup?: string;
   incumbent?: boolean;
 };
 
@@ -23,9 +24,10 @@ export async function POST(request: Request) {
     employeeNumber: String(row.employeeNumber ?? "").trim(),
     department: String(row.department ?? "").trim(),
     unit: String(row.unit ?? "").trim(),
+    electionGroup: String(row.electionGroup ?? "").trim(),
     incumbent: Boolean(row.incumbent),
   }));
-  const missing = rows.filter((row) => !row.name || !row.employeeNumber || !row.department || !row.unit);
+  const missing = rows.filter((row) => !row.name || !row.employeeNumber || !row.department || !row.unit || !row.electionGroup);
   if (missing.length) return error(`第 ${missing.slice(0, 5).map((row) => row.row).join("、")} 列有必填欄位空白`);
   const seen = new Set<string>();
   const duplicate = rows.find((row) => seen.has(row.employeeNumber) || !seen.add(row.employeeNumber));
@@ -39,11 +41,12 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   for (let offset = 0; offset < rows.length; offset += 200) {
     const statements = rows.slice(offset, offset + 200).map((row) => db.prepare(
-      `INSERT INTO employees (name, employee_number, department, unit, incumbent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).bind(row.name, row.employeeNumber, row.department, row.unit, row.incumbent ? 1 : 0, now));
+      `INSERT INTO employees (name, employee_number, department, unit, election_group, incumbent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(row.name, row.employeeNumber, row.department, row.unit, row.electionGroup, row.incumbent ? 1 : 0, now));
     await db.batch(statements);
   }
-  await addAudit("employee_import", `${rows.length} employees`);
-  return json({ ok: true, count: rows.length });
+  const groupCount = new Set(rows.map((row) => row.electionGroup)).size;
+  await addAudit("employee_import", `${rows.length} employees, ${groupCount} election groups`);
+  return json({ ok: true, count: rows.length, groupCount });
 }

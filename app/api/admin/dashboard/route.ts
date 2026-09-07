@@ -21,16 +21,17 @@ export async function GET(request: Request) {
        GROUP BY e.department, e.unit ORDER BY e.department, e.unit`,
     ).all<{ department: string; unit: string; total: number; voted: number }>(),
     db.prepare(
-      `SELECT e.id, e.name, e.employee_number AS employeeNumber, e.department, e.unit, e.incumbent,
+      `SELECT e.id, e.name, e.employee_number AS employeeNumber, e.department, e.unit, e.election_group AS electionGroup, e.incumbent,
         COUNT(v.id) AS votes
        FROM employees e LEFT JOIN votes v ON v.candidate_employee_id = e.id
-       GROUP BY e.id ORDER BY e.department, e.unit, votes DESC, e.name`,
+       GROUP BY e.id ORDER BY e.election_group, votes DESC, e.name`,
     ).all<{
       id: number;
       name: string;
       employeeNumber: string;
       department: string;
       unit: string;
+      electionGroup: string;
       incumbent: number;
       votes: number;
     }>(),
