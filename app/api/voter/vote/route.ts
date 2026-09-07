@@ -18,7 +18,7 @@ export async function POST(request: Request) {
      FROM employees voter
      JOIN employees candidate ON candidate.id = ?
        AND candidate.election_group = voter.election_group
-     WHERE voter.id = ?`,
+     WHERE voter.id = ? AND voter.election_group <> ''`,
   ).bind(body.candidateId!, session.employeeId).first<{ voter_id: number; candidate_id: number }>();
   if (!match) return error("候選人不屬於您的選舉分組", 400);
 
