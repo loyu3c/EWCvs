@@ -4,13 +4,21 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
 type Status = "setup" | "open" | "paused" | "closed";
-type ImportRow = { name: string; employeeNumber: string; department: string; unit: string; incumbent: boolean };
+type ImportRow = {
+  name: string;
+  employeeNumber: string;
+  department: string;
+  unit: string;
+  electionGroup: string;
+  incumbent: boolean;
+};
+type ImportGroupSummary = { name: string; count: number; incumbents: number };
 type Dashboard = {
   settings: { title: string; status: Status; updatedAt: string };
   totals: { employees: number; votes: number; testEmployees: number };
   units: { department: string; unit: string; total: number; voted: number }[];
   candidates: {
-    id: number; name: string; employeeNumber: string; department: string; unit: string; incumbent: boolean; votes: number;
+    id: number; name: string; employeeNumber: string; department: string; unit: string; electionGroup: string; incumbent: boolean; votes: number;
   }[];
   logs: { action: string; details: string | null; createdAt: string }[];
 };
@@ -24,7 +32,15 @@ async function readJson(response: Response) {
 }
 
 function truthy(value: unknown) {
-  return ["是", "現任", "現任福委", "yes", "true", "1", "y"].includes(String(value ?? "").trim().toLowerCase());
+  return ["是", "現任", "現任福委", "yes", "true", "1", "y", "v"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+function cellText(row: Record<string, unknown>, names: string[]) {
+  for (const name of names) {
+    const value = row[name];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return "";
 }
 
 export function AdminApp() {
@@ -33,6 +49,8 @@ export function AdminApp() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [fileName, setFileName] = useState("");
+  const [importIssues, setImportIssues] = useState<string[]>([]);
+  const [importGroups, setImportGroups] = useState<ImportGroupSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -79,30 +97,113 @@ export function AdminApp() {
   };
 
   const parseExcel = async (file: File) => {
-    setError(""); setMessage("");
+    setError(""); setMessage(""); setRows([]); setImportIssues([]); setImportGroups([]);
     try {
       const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-      const parsed = raw.map((item) => ({
-        name: String(item["姓名"] ?? "").trim(),
-        employeeNumber: String(item["員工編號"] ?? "").trim(),
-        department: String(item["部門"] ?? "").trim(),
-        unit: String(item["單位"] ?? "").trim(),
-        incumbent: truthy(item["是否現任福委"]),
-      }));
-      if (!parsed.length) throw new Error("Excel 第一個工作表沒有資料");
-      setRows(parsed); setFileName(file.name);
-    } catch (caught) { setRows([]); setError(caught instanceof Error ? caught.message : "Excel 讀取失敗"); }
+      if (!workbook.SheetNames.includes("清冊")) throw new Error("找不到「清冊」工作表");
+      const groupSheetNames = workbook.SheetNames.filter((name) => name !== "清冊");
+      if (!groupSheetNames.length) throw new Error("清冊後方至少需要一個選舉分組工作表");
+
+      const masterRaw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets["清冊"], { defval: "" });
+      const masterRows = masterRaw.map((item) => ({
+        name: cellText(item, ["中文姓名", "姓名"]),
+        employeeNumber: cellText(item, ["員編", "員工編號"]),
+        department: cellText(item, ["部門"]),
+        unit: cellText(item, ["單位"]),
+        electionGroup: "",
+        incumbent: false,
+      })).filter((row) => row.name || row.employeeNumber || row.department || row.unit);
+
+      if (!masterRows.length) throw new Error("「清冊」工作表沒有員工資料");
+
+      const issues: string[] = [];
+      const masterById = new Map<string, ImportRow>();
+      for (const row of masterRows) {
+        if (!row.name || !row.employeeNumber || !row.department || !row.unit) {
+          issues.push("清冊有必填欄位空白：" + (row.employeeNumber || row.name || "無法辨識的資料列"));
+          continue;
+        }
+        if (masterById.has(row.employeeNumber)) {
+          issues.push("清冊員編重複：" + row.employeeNumber);
+          continue;
+        }
+        masterById.set(row.employeeNumber, row);
+      }
+
+      const assigned = new Map<string, ImportRow>();
+      const membership = new Map<string, string>();
+      const summaries: ImportGroupSummary[] = [];
+
+      for (const groupName of groupSheetNames) {
+        const groupRaw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[groupName], { defval: "" });
+        const seenInGroup = new Set<string>();
+        let incumbents = 0;
+
+        for (const item of groupRaw) {
+          const employeeNumber = cellText(item, ["員編", "員工編號"]);
+          if (!employeeNumber) continue;
+          if (seenInGroup.has(employeeNumber)) {
+            issues.push(groupName + " 內員編重複：" + employeeNumber);
+            continue;
+          }
+          seenInGroup.add(employeeNumber);
+
+          const master = masterById.get(employeeNumber);
+          if (!master) {
+            issues.push(groupName + " 有清冊外員工：" + employeeNumber);
+            continue;
+          }
+          const previousGroup = membership.get(employeeNumber);
+          if (previousGroup) {
+            issues.push("員工 " + employeeNumber + " 同時出現在「" + previousGroup + "」與「" + groupName + "」");
+            continue;
+          }
+
+          const groupNameValue = cellText(item, ["中文姓名", "姓名"]);
+          const groupDepartment = cellText(item, ["部門"]);
+          const groupUnit = cellText(item, ["單位"]);
+          if (
+            (groupNameValue && groupNameValue !== master.name) ||
+            (groupDepartment && groupDepartment !== master.department) ||
+            (groupUnit && groupUnit !== master.unit)
+          ) {
+            issues.push(groupName + " 與清冊資料不一致：" + employeeNumber);
+            continue;
+          }
+
+          const incumbent = truthy(item["現任"] ?? item["是否現任福委"] ?? item["現任福委"]);
+          if (incumbent) incumbents += 1;
+          membership.set(employeeNumber, groupName);
+          assigned.set(employeeNumber, { ...master, electionGroup: groupName, incumbent });
+        }
+        summaries.push({ name: groupName, count: seenInGroup.size, incumbents });
+      }
+
+      for (const [employeeNumber, master] of masterById) {
+        if (!membership.has(employeeNumber)) issues.push("未分配選舉分組：" + employeeNumber + " " + master.name);
+      }
+
+      const parsed = Array.from(masterById, ([employeeNumber, master]) =>
+        assigned.get(employeeNumber) ?? master
+      );
+      setRows(parsed);
+      setImportIssues(issues);
+      setImportGroups(summaries);
+      setFileName(file.name);
+    } catch (caught) {
+      setRows([]); setImportIssues([]); setImportGroups([]); setFileName("");
+      setError(caught instanceof Error ? caught.message : "Excel 讀取失敗");
+    }
   };
 
   const importRows = async () => {
+    if (importIssues.length) { setError("請先修正匯入檢查列出的問題"); return; }
     setBusy(true); setError(""); setMessage("");
     try {
       const data = await readJson(await fetch("/api/admin/import", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rows }),
       }));
-      setMessage(`已成功匯入 ${data.count} 位員工`); setRows([]); setFileName(""); await loadDashboard();
+      setMessage(`已成功匯入 ${data.count} 位員工，共 ${data.groupCount} 個選舉分組`); setRows([]); setImportIssues([]); setImportGroups([]); setFileName(""); await loadDashboard();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "匯入失敗"); }
     finally { setBusy(false); }
   };
@@ -162,24 +263,32 @@ export function AdminApp() {
   const groupedResults = useMemo(() => {
     const groups = new Map<string, Dashboard["candidates"]>();
     for (const candidate of dashboard?.candidates ?? []) {
-      const key = `${candidate.department}｜${candidate.unit}`;
+      const key = candidate.electionGroup || "未分組";
       groups.set(key, [...(groups.get(key) ?? []), candidate]);
     }
     return groups;
   }, [dashboard]);
 
   const downloadTemplate = () => {
-    const sheet = XLSX.utils.json_to_sheet([
-      { 姓名: "王小明", 員工編號: "E0001", 部門: "營運部", 單位: "行政組", 是否現任福委: "否" },
-    ]);
-    const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, "員工名單");
-    XLSX.writeFile(book, "福委改選名單範本.xlsx");
+    const book = XLSX.utils.book_new();
+    const headers = [["部門", "單位", "員編", "中文姓名"]];
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+      ...headers,
+      ["營運部", "行政組", "E0001", "王小明"],
+    ]), "清冊");
+    const groupNames = ["餐飲", "廚務", "房務", "客務", "後勤", "管理部", "休開", "工程部"];
+    for (const groupName of groupNames) {
+      const rows = [["部門", "單位", "員編", "中文姓名", "現任"]];
+      if (groupName === "餐飲") rows.push(["營運部", "行政組", "E0001", "王小明", "v"]);
+      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), groupName);
+    }
+    XLSX.writeFile(book, "福委改選分組名單範本.xlsx");
   };
 
   const exportResults = () => {
     if (!dashboard) return;
     const records = dashboard.candidates.map((candidate) => ({
-      部門: candidate.department, 單位: candidate.unit, 姓名: candidate.name,
+      選舉分組: candidate.electionGroup, 部門: candidate.department, 單位: candidate.unit, 姓名: candidate.name,
       員工編號: candidate.employeeNumber, 是否現任福委: candidate.incumbent ? "是" : "否", 得票數: candidate.votes,
     }));
     const sheet = XLSX.utils.json_to_sheet(records);
@@ -263,16 +372,18 @@ export function AdminApp() {
         {activePanel === "import" && (
           <div className="admin-panel-stack">
             <section className="admin-card import-card">
-              <div className="panel-heading"><div><p className="section-kicker">EMPLOYEE ROSTER</p><h2>匯入員工名單</h2><p>支援 .xlsx 與 .xls，第一個工作表須包含指定的五個欄位。</p></div><button className="secondary-button" onClick={downloadTemplate}>下載 Excel 範本</button></div>
+              <div className="panel-heading"><div><p className="section-kicker">EMPLOYEE ROSTER</p><h2>匯入員工名單</h2><p>第一個頁籤須為「清冊」，後續每個頁籤代表一個選舉分組。</p></div><button className="secondary-button" onClick={downloadTemplate}>下載 Excel 範本</button></div>
               <label className="drop-zone">
                 <input type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && parseExcel(event.target.files[0])} />
                 <span className="upload-icon">⇧</span><strong>{fileName || "選擇 Excel 名單"}</strong><small>點擊選擇檔案，名單不會在確認前寫入系統</small>
               </label>
-              <div className="required-columns"><span>必要欄位</span>{["姓名", "員工編號", "部門", "單位", "是否現任福委"].map((column) => <b key={column}>{column}</b>)}</div>
+              <div className="required-columns"><span>清冊欄位</span>{["部門", "單位", "員編", "中文姓名"].map((column) => <b key={column}>{column}</b>)}<span>分組頁籤另加</span><b>現任</b></div>
             </section>
             {rows.length > 0 && <section className="admin-card preview-card">
-              <div className="panel-heading"><div><p className="section-kicker">IMPORT PREVIEW</p><h2>匯入預覽</h2><p>共讀取 {rows.length} 筆，以下顯示前 8 筆。</p></div><button className="primary-button" disabled={busy} onClick={importRows}>{busy ? "匯入中…" : `確認匯入 ${rows.length} 筆`}</button></div>
-              <div className="preview-table"><div className="preview-row preview-head"><span>姓名</span><span>員工編號</span><span>部門</span><span>單位</span><span>現任</span></div>{rows.slice(0, 8).map((row, index) => <div className="preview-row" key={`${row.employeeNumber}-${index}`}><span>{row.name || "—"}</span><span>{row.employeeNumber || "—"}</span><span>{row.department || "—"}</span><span>{row.unit || "—"}</span><span>{row.incumbent ? "是" : "否"}</span></div>)}</div>
+              <div className="panel-heading"><div><p className="section-kicker">IMPORT PREVIEW</p><h2>匯入預覽</h2><p>共讀取 {rows.length} 筆、{importGroups.length} 個選舉分組，以下顯示前 8 筆。</p></div><button className="primary-button" disabled={busy || importIssues.length > 0} onClick={importRows}>{busy ? "匯入中…" : importIssues.length ? "請先修正資料" : `確認匯入 ${rows.length} 筆`}</button></div>
+              <div className="import-summary">{importGroups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>{group.count} 人</span><small>現任 {group.incumbents} 人</small></div>)}</div>
+              {importIssues.length > 0 && <div className="import-issues" role="alert"><strong>發現 {importIssues.length} 個問題，尚未匯入</strong><ul>{importIssues.slice(0, 30).map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}</ul>{importIssues.length > 30 && <p>另有 {importIssues.length - 30} 個問題未顯示。</p>}</div>}
+              <div className="preview-table"><div className="preview-row preview-head"><span>姓名</span><span>員工編號</span><span>部門</span><span>單位</span><span>選舉分組</span><span>現任</span></div>{rows.slice(0, 8).map((row, index) => <div className="preview-row" key={`${row.employeeNumber}-${index}`}><span>{row.name || "—"}</span><span>{row.employeeNumber || "—"}</span><span>{row.department || "—"}</span><span>{row.unit || "—"}</span><span>{row.electionGroup || "未分組"}</span><span>{row.incumbent ? "是" : "否"}</span></div>)}</div>
             </section>}
           </div>
         )}
@@ -285,7 +396,7 @@ export function AdminApp() {
               const leaders = candidates.filter((candidate) => Number(candidate.votes) === max && max > 0);
               const tied = leaders.length > 1;
               return <section className="admin-card result-group" key={key}>
-                <div className="result-group-title"><div><p>{candidates[0]?.department}</p><h3>{candidates[0]?.unit}</h3></div>{tied && <span className="tie-badge">最高票同票・待管理者處理</span>}</div>
+                <div className="result-group-title"><div><p>{candidates.length} 位候選人</p><h3>{key}</h3></div>{tied && <span className="tie-badge">最高票同票・待管理者處理</span>}</div>
                 <div className="result-list">{candidates.map((candidate, index) => {
                   const votes = Number(candidate.votes); const leader = votes === max && max > 0;
                   return <div className={`result-row ${leader ? "leader" : ""}`} key={candidate.id}><span className="rank">{String(index + 1).padStart(2, "0")}</span><span className="result-person"><strong>{candidate.name}</strong><small>{candidate.employeeNumber}{candidate.incumbent ? " · 現任福委" : ""}</small></span><span className="vote-bar"><i><b style={{ width: max ? `${(votes / max) * 100}%` : "0%" }} /></i></span><strong className="vote-number">{votes}<small>票</small></strong>{leader && <span className="leader-label">最高票</span>}</div>;
