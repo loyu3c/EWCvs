@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     has_voted: number;
   }>();
   if (!voter) return error("找不到投票者資料", 404);
+  if (!voter.electionGroup) return error("名單尚未設定選舉分組，請聯絡管理者", 409);
 
   const candidates = await db.prepare(
     `SELECT id, name, employee_number AS employeeNumber, incumbent
