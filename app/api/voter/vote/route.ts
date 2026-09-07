@@ -17,11 +17,10 @@ export async function POST(request: Request) {
     `SELECT voter.id AS voter_id, candidate.id AS candidate_id
      FROM employees voter
      JOIN employees candidate ON candidate.id = ?
-       AND candidate.department = voter.department
-       AND candidate.unit = voter.unit
+       AND candidate.election_group = voter.election_group
      WHERE voter.id = ?`,
   ).bind(body.candidateId!, session.employeeId).first<{ voter_id: number; candidate_id: number }>();
-  if (!match) return error("候選人不屬於您的部門單位", 400);
+  if (!match) return error("候選人不屬於您的選舉分組", 400);
 
   const receiptCode = crypto.randomUUID().split("-")[0].toUpperCase();
   try {
