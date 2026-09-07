@@ -98,7 +98,34 @@ export async function passwordMatches(input: string) {
   ).first<{ passwordHash: string; passwordSalt: string; iterations: number }>();
   if (credential) {
     const actual = await derivePasswordHash(input, credential.passwordSalt, credential.iterations);
-    return constantTimeEqual(actual, credential.passwordHash);
+    if (constantTimeEqual(actual, credential.passwordHash)) return true;
+
+    // Allow the operator-controlled recovery credential exactly once.
+    const recoveryPassword = getBindings().ADMIN_PASSWORD;
+    if (!recoveryPassword) return false;
+    const recoveryUsed = await getDatabase().prepare(
+      "SELECT id FROM audit_logs WHERE action = ? LIMIT 1",
+    ).bind("admin_password_env_recovery_consumed_v1").first<{ id: number }>();
+    if (recoveryUsed) return false;
+
+    const [inputDigest, recoveryDigest] = await Promise.all([
+      crypto.subtle.digest("SHA-256", encoder.encode(input)),
+      crypto.subtle.digest("SHA-256", encoder.encode(recoveryPassword)),
+    ]);
+    if (!constantTimeEqual(
+      toBase64Url(new Uint8Array(inputDigest)),
+      toBase64Url(new Uint8Array(recoveryDigest)),
+    )) return false;
+
+    await updateAdminPassword(input);
+    await getDatabase().prepare(
+      "INSERT INTO audit_logs (action, details, created_at) VALUES (?, ?, ?)",
+    ).bind(
+      "admin_password_env_recovery_consumed_v1",
+      "One-time environment recovery credential consumed",
+      new Date().toISOString(),
+    ).run();
+    return true;
   }
   const expected = getBindings().ADMIN_PASSWORD ?? "ewc-demo-admin";
   const [actualHash, expectedHash] = await Promise.all([
