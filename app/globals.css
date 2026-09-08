@@ -84,6 +84,9 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 .candidate-card { min-height: 92px; padding: 18px 20px; position: relative; display: flex; align-items: center; gap: 18px; text-align: left; border: 1px solid var(--line); background: #fbfaf6; cursor: pointer; transition: .2s; }
 .candidate-card:hover { border-color: #a9b2bd; transform: translateY(-1px); }
 .candidate-card.selected { border-color: var(--coral); background: #fff8f4; box-shadow: inset 4px 0 var(--coral); }
+.candidate-card.ineligible, .candidate-card.ineligible:hover { color: #89919a; background: #efefed; border-color: #deded9; box-shadow: none; cursor: not-allowed; transform: none; opacity: .72; }
+.candidate-card.ineligible .candidate-number, .candidate-card.ineligible .employee-code { color: #9da3a9; }
+.candidate-card.ineligible .radio-mark { display: none; }
 .candidate-number { color: #a3acb7; font: 800 12px/1 sans-serif; }
 .candidate-info { display: grid; gap: 4px; }
 .candidate-name { font-size: 19px; font-weight: 900; }

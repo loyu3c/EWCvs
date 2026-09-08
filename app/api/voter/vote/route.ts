@@ -18,9 +18,10 @@ export async function POST(request: Request) {
      FROM employees voter
      JOIN employees candidate ON candidate.id = ?
        AND candidate.election_group = voter.election_group
+       AND candidate.incumbent = 0
      WHERE voter.id = ? AND voter.election_group <> ''`,
   ).bind(body.candidateId!, session.employeeId).first<{ voter_id: number; candidate_id: number }>();
-  if (!match) return error("候選人不屬於您的選舉分組", 400);
+  if (!match) return error("現任福委或非本組人員不能被選", 400);
 
   const receiptCode = crypto.randomUUID().split("-")[0].toUpperCase();
   try {
