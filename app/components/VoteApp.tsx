@@ -160,18 +160,20 @@ export function VoteApp() {
             <div className="candidate-grid">
               {candidates.map((candidate, index) => (
                 <button
-                  className={`candidate-card ${selected?.id === candidate.id ? "selected" : ""}`}
+                  className={`candidate-card ${candidate.incumbent ? "ineligible" : ""} ${selected?.id === candidate.id ? "selected" : ""}`}
                   key={candidate.id}
                   type="button"
+                  disabled={candidate.incumbent}
                   onClick={() => setSelected(candidate)}
                   aria-pressed={selected?.id === candidate.id}
+                  aria-label={candidate.incumbent ? `${candidate.name}，現任福委，不可選` : candidate.name}
                 >
                   <span className="candidate-number">{String(index + 1).padStart(2, "0")}</span>
                   <span className="candidate-info">
                     <span className="candidate-name">{candidate.name}</span>
                     <span className="employee-code">員編 {candidate.employeeNumber}</span>
                   </span>
-                  {candidate.incumbent && <span className="incumbent-badge">現任福委</span>}
+                  {candidate.incumbent && <span className="incumbent-badge">現任福委・不可選</span>}
                   <span className="radio-mark" aria-hidden="true" />
                 </button>
               ))}
