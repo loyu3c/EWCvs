@@ -131,7 +131,10 @@ export function VoteApp() {
             <div className="completion-check">✓</div>
             <p className="eyebrow">BALLOT RECEIVED</p>
             <h2>選票已成功送出</h2>
-            <p>謝謝您參與本次福委改選。您的選票已安全記錄，送出後無法修改。</p>
+            <p>
+              感謝您參與本次福委改選！<br />
+              本次投票採匿名方式進行，不會顯示或公開您的投票選擇。
+            </p>
             <div className="receipt-box">
               <span>完成編號</span>
               <strong>{receipt}</strong>
