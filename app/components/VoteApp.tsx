@@ -16,10 +16,14 @@ const statusCopy: Record<ElectionStatus, { label: string; message: string }> = {
 };
 
 function ineligibilityLabel(candidate: Candidate) {
-  if (candidate.incumbent && candidate.formerMember) return "現任及曾任福委・不可選";
-  if (candidate.incumbent) return "現任福委・不可選";
-  if (candidate.formerMember) return "曾任福委・不可選";
+  if (candidate.incumbent && candidate.formerMember) return "現任及曾任福委・建議改選";
+  if (candidate.incumbent) return "現任福委・建議改選";
+  if (candidate.formerMember) return "曾任福委・建議改選";
   return "";
+}
+
+function ineligibilityBadgeClass(candidate: Candidate) {
+  return `eligibility-badge ${candidate.incumbent ? "current-member" : "former-member"}`;
 }
 
 async function readJson(response: Response) {
@@ -182,7 +186,7 @@ export function VoteApp() {
                     <span className="candidate-name">{candidate.name}</span>
                     <span className="employee-code">員編 {candidate.employeeNumber}</span>
                   </span>
-                  {ineligible && <span className="incumbent-badge">{label}</span>}
+                  {ineligible && <span className={ineligibilityBadgeClass(candidate)}>{label}</span>}
                   <span className="radio-mark" aria-hidden="true" />
                 </button>;
               })}
@@ -271,7 +275,7 @@ export function VoteApp() {
             <p>您選擇的是</p>
             <div className="confirm-choice">
               <strong>{selected.name}</strong>
-              {(selected.incumbent || selected.formerMember) && <span className="incumbent-badge">{ineligibilityLabel(selected)}</span>}
+              {(selected.incumbent || selected.formerMember) && <span className={ineligibilityBadgeClass(selected)}>{ineligibilityLabel(selected)}</span>}
             </div>
             <p className="warning-copy">選票送出後無法修改，且您不能再次投票。</p>
             <div className="modal-actions">

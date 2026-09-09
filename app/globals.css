@@ -91,8 +91,10 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 .candidate-info { display: grid; gap: 4px; }
 .candidate-name { font-size: 19px; font-weight: 900; }
 .employee-code { color: var(--muted); font-size: 12px; }
-.incumbent-badge { display: inline-flex; width: fit-content; padding: 5px 8px; color: #855f17; background: #fff1c9; border: 1px solid #ead28f; font-size: 10px; font-weight: 800; }
-.candidate-card .incumbent-badge { margin-left: auto; }
+.eligibility-badge { display: inline-flex; width: fit-content; padding: 5px 8px; font-size: 10px; font-weight: 800; }
+.eligibility-badge.current-member { color: #855f17; background: #fff1c9; border: 1px solid #ead28f; }
+.eligibility-badge.former-member { color: #345f79; background: #eaf3f7; border: 1px solid #bfd5df; }
+.candidate-card .eligibility-badge { margin-left: auto; }
 .radio-mark { width: 19px; height: 19px; flex: 0 0 auto; border: 2px solid #b6bdc5; border-radius: 50%; }
 .selected .radio-mark { border: 5px solid var(--coral); }
 .ballot-action { margin-top: 28px; padding-top: 24px; display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 1px solid var(--line); }
@@ -282,7 +284,7 @@ select:disabled { opacity: .5; cursor: not-allowed; }
   .ballot-heading, .ballot-action { align-items: flex-start; flex-direction: column; }
   .ballot-action .primary-button { width: 100%; }
   .candidate-card { padding: 15px; gap: 12px; }
-  .candidate-card .incumbent-badge { position: absolute; right: 44px; top: 10px; }
+  .candidate-card .eligibility-badge { position: absolute; right: 44px; top: 10px; }
   .public-footer { align-items: flex-start; flex-direction: column; }
   .modal-actions { grid-template-columns: 1fr; }
   .confirm-modal { padding: 30px 22px; }
