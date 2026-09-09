@@ -50,6 +50,7 @@ const normalizedKeys: Record<string, string> = {
   createdat: "createdAt",
   electiongroup: "electionGroup",
   employeenumber: "employeeNumber",
+  formermember: "formerMember",
   passwordhash: "passwordHash",
   passwordsalt: "passwordSalt",
   sessionversion: "sessionVersion",
@@ -177,11 +178,13 @@ async function initializeSchema() {
       unit TEXT NOT NULL,
       election_group TEXT NOT NULL DEFAULT '',
       incumbent INTEGER NOT NULL DEFAULT 0,
+      former_member INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )`),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_employee_number ON employees(employee_number)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_employees_department_unit ON employees(department, unit)"),
     db.prepare("ALTER TABLE employees ADD COLUMN IF NOT EXISTS election_group TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE employees ADD COLUMN IF NOT EXISTS former_member INTEGER NOT NULL DEFAULT 0"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_employees_election_group ON employees(election_group)"),
     db.prepare(`CREATE TABLE IF NOT EXISTS votes (
       id BIGSERIAL PRIMARY KEY,

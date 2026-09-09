@@ -9,6 +9,7 @@ type ImportRow = {
   unit?: string;
   electionGroup?: string;
   incumbent?: boolean;
+  formerMember?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -17,6 +18,9 @@ export async function POST(request: Request) {
   const body = (await request.json()) as { rows?: ImportRow[] };
   if (!Array.isArray(body.rows) || body.rows.length === 0) return error("Excel 內沒有可匯入的員工資料");
   if (body.rows.length > 10000) return error("單次最多匯入 10,000 筆資料");
+  if (body.rows.some((row) => typeof row.incumbent !== "boolean" || typeof row.formerMember !== "boolean")) {
+    return error("名單缺少「現任」或「當過」資格欄位，請重新選擇新版 Excel 檔案");
+  }
 
   const rows = body.rows.map((row, index) => ({
     row: index + 2,
@@ -26,6 +30,7 @@ export async function POST(request: Request) {
     unit: String(row.unit ?? "").trim(),
     electionGroup: String(row.electionGroup ?? "").trim(),
     incumbent: Boolean(row.incumbent),
+    formerMember: Boolean(row.formerMember),
   }));
   const missing = rows.filter((row) => !row.name || !row.employeeNumber || !row.department || !row.unit || !row.electionGroup);
   if (missing.length) return error(`第 ${missing.slice(0, 5).map((row) => row.row).join("、")} 列有必填欄位空白`);
@@ -41,9 +46,9 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   for (let offset = 0; offset < rows.length; offset += 200) {
     const statements = rows.slice(offset, offset + 200).map((row) => db.prepare(
-      `INSERT INTO employees (name, employee_number, department, unit, election_group, incumbent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(row.name, row.employeeNumber, row.department, row.unit, row.electionGroup, row.incumbent ? 1 : 0, now));
+      `INSERT INTO employees (name, employee_number, department, unit, election_group, incumbent, former_member, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(row.name, row.employeeNumber, row.department, row.unit, row.electionGroup, row.incumbent ? 1 : 0, row.formerMember ? 1 : 0, now));
     await db.batch(statements);
   }
   const groupCount = new Set(rows.map((row) => row.electionGroup)).size;

@@ -26,9 +26,18 @@ export async function POST(request: Request) {
     const [department, unit, electionGroup] = units[Math.floor(index / 10)];
     const number = String(index + 1).padStart(4, "0");
     return db.prepare(
-      `INSERT INTO employees (name, employee_number, department, unit, election_group, incumbent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(`測試員工${number}`, `TEST${number}`, department, unit, electionGroup, index % 20 === 0 ? 1 : 0, now);
+      `INSERT INTO employees (name, employee_number, department, unit, election_group, incumbent, former_member, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      `測試員工${number}`,
+      `TEST${number}`,
+      department,
+      unit,
+      electionGroup,
+      index % 20 === 0 ? 1 : 0,
+      index % 20 === 10 ? 1 : 0,
+      now,
+    );
   });
   await db.batch(statements);
   await addAudit("test_data_generated", "100 employees");

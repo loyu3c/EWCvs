@@ -201,7 +201,7 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 .import-issues ul { max-height: 240px; margin: 10px 0 0; padding-left: 20px; overflow: auto; line-height: 1.7; }
 .import-issues p { margin: 8px 0 0; }
 .preview-table { overflow-x: auto; }
-.preview-row { min-width: 780px; min-height: 48px; display: grid; grid-template-columns: 1fr 1fr 1.1fr 1.1fr 1fr .5fr; align-items: center; border-bottom: 1px solid #ebe6dd; font-size: 12px; }
+.preview-row { min-width: 860px; min-height: 48px; display: grid; grid-template-columns: 1fr 1fr 1.1fr 1.1fr 1fr .5fr .5fr; align-items: center; border-bottom: 1px solid #ebe6dd; font-size: 12px; }
 .preview-head { min-height: 36px; color: var(--muted); background: #f5f2ec; font-size: 10px; font-weight: 800; }
 .preview-row span { padding: 0 10px; }
 .results-header { align-items: center; }

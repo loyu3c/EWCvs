@@ -23,13 +23,14 @@ export async function GET(request: Request) {
   if (!voter.electionGroup) return error("名單尚未設定選舉分組，請聯絡管理者", 409);
 
   const candidates = await db.prepare(
-    `SELECT id, name, employee_number AS employeeNumber, incumbent
-     FROM employees WHERE election_group = ? ORDER BY incumbent DESC, name`,
+    `SELECT id, name, employee_number AS employeeNumber, incumbent, former_member AS formerMember
+     FROM employees WHERE election_group = ? ORDER BY (incumbent = 1 OR former_member = 1) DESC, name`,
   ).bind(voter.electionGroup).all<{
     id: number;
     name: string;
     employeeNumber: string;
     incumbent: number;
+    formerMember: number;
   }>();
 
   return json({
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
     candidates: (candidates.results ?? []).map((candidate) => ({
       ...candidate,
       incumbent: Boolean(candidate.incumbent),
+      formerMember: Boolean(candidate.formerMember),
     })),
   });
 }

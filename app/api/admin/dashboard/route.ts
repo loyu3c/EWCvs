@@ -22,6 +22,7 @@ export async function GET(request: Request) {
     ).all<{ department: string; unit: string; total: number; voted: number }>(),
     db.prepare(
       `SELECT e.id, e.name, e.employee_number AS employeeNumber, e.department, e.unit, e.election_group AS electionGroup, e.incumbent,
+        e.former_member AS formerMember,
         COUNT(v.id) AS votes
        FROM employees e LEFT JOIN votes v ON v.candidate_employee_id = e.id
        GROUP BY e.id ORDER BY e.election_group, votes DESC, e.name`,
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
       unit: string;
       electionGroup: string;
       incumbent: number;
+      formerMember: number;
       votes: number;
     }>(),
     db.prepare(
@@ -47,6 +49,7 @@ export async function GET(request: Request) {
     candidates: (candidates.results ?? []).map((candidate) => ({
       ...candidate,
       incumbent: Boolean(candidate.incumbent),
+      formerMember: Boolean(candidate.formerMember),
     })),
     logs: logs.results ?? [],
   });

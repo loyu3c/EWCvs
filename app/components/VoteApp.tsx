@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type ElectionStatus = "setup" | "open" | "paused" | "closed";
 type Department = { name: string; units: { name: string; employeeNumbers: string[] }[] };
 type Options = { election: { title: string; status: ElectionStatus }; departments: Department[] };
-type Candidate = { id: number; name: string; employeeNumber: string; incumbent: boolean };
+type Candidate = { id: number; name: string; employeeNumber: string; incumbent: boolean; formerMember: boolean };
 type Voter = { name: string; department: string; unit: string; electionGroup: string; hasVoted: boolean };
 
 const statusCopy: Record<ElectionStatus, { label: string; message: string }> = {
@@ -14,6 +14,13 @@ const statusCopy: Record<ElectionStatus, { label: string; message: string }> = {
   paused: { label: "暫停投票", message: "投票目前暫停，請稍後再回來。" },
   closed: { label: "投票已結束", message: "本次福委改選投票已經結束。" },
 };
+
+function ineligibilityLabel(candidate: Candidate) {
+  if (candidate.incumbent && candidate.formerMember) return "現任及曾任福委・不可選";
+  if (candidate.incumbent) return "現任福委・不可選";
+  if (candidate.formerMember) return "曾任福委・不可選";
+  return "";
+}
 
 async function readJson(response: Response) {
   const data = (await response.json()) as Record<string, unknown>;
@@ -158,25 +165,27 @@ export function VoteApp() {
               <span className="choice-count">單選 1 人</span>
             </div>
             <div className="candidate-grid">
-              {candidates.map((candidate, index) => (
-                <button
-                  className={`candidate-card ${candidate.incumbent ? "ineligible" : ""} ${selected?.id === candidate.id ? "selected" : ""}`}
+              {candidates.map((candidate, index) => {
+                const ineligible = candidate.incumbent || candidate.formerMember;
+                const label = ineligibilityLabel(candidate);
+                return <button
+                  className={`candidate-card ${ineligible ? "ineligible" : ""} ${selected?.id === candidate.id ? "selected" : ""}`}
                   key={candidate.id}
                   type="button"
-                  disabled={candidate.incumbent}
+                  disabled={ineligible}
                   onClick={() => setSelected(candidate)}
                   aria-pressed={selected?.id === candidate.id}
-                  aria-label={candidate.incumbent ? `${candidate.name}，現任福委，不可選` : candidate.name}
+                  aria-label={ineligible ? `${candidate.name}，${label}` : candidate.name}
                 >
                   <span className="candidate-number">{String(index + 1).padStart(2, "0")}</span>
                   <span className="candidate-info">
                     <span className="candidate-name">{candidate.name}</span>
                     <span className="employee-code">員編 {candidate.employeeNumber}</span>
                   </span>
-                  {candidate.incumbent && <span className="incumbent-badge">現任福委・不可選</span>}
+                  {ineligible && <span className="incumbent-badge">{label}</span>}
                   <span className="radio-mark" aria-hidden="true" />
-                </button>
-              ))}
+                </button>;
+              })}
             </div>
             {error && <p className="form-error">{error}</p>}
             <div className="ballot-action">
@@ -262,7 +271,7 @@ export function VoteApp() {
             <p>您選擇的是</p>
             <div className="confirm-choice">
               <strong>{selected.name}</strong>
-              {selected.incumbent && <span className="incumbent-badge">現任福委</span>}
+              {(selected.incumbent || selected.formerMember) && <span className="incumbent-badge">{ineligibilityLabel(selected)}</span>}
             </div>
             <p className="warning-copy">選票送出後無法修改，且您不能再次投票。</p>
             <div className="modal-actions">

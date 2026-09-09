@@ -11,14 +11,15 @@ type ImportRow = {
   unit: string;
   electionGroup: string;
   incumbent: boolean;
+  formerMember: boolean;
 };
-type ImportGroupSummary = { name: string; count: number; incumbents: number };
+type ImportGroupSummary = { name: string; count: number; incumbents: number; formerMembers: number };
 type Dashboard = {
   settings: { title: string; status: Status; updatedAt: string };
   totals: { employees: number; votes: number; testEmployees: number };
   units: { department: string; unit: string; total: number; voted: number }[];
   candidates: {
-    id: number; name: string; employeeNumber: string; department: string; unit: string; electionGroup: string; incumbent: boolean; votes: number;
+    id: number; name: string; employeeNumber: string; department: string; unit: string; electionGroup: string; incumbent: boolean; formerMember: boolean; votes: number;
   }[];
   logs: { action: string; details: string | null; createdAt: string }[];
 };
@@ -32,7 +33,7 @@ async function readJson(response: Response) {
 }
 
 function truthy(value: unknown) {
-  return ["是", "現任", "現任福委", "yes", "true", "1", "y", "v"].includes(String(value ?? "").trim().toLowerCase());
+  return ["是", "現任", "現任福委", "曾任", "當過", "yes", "true", "1", "y", "v"].includes(String(value ?? "").trim().toLowerCase());
 }
 
 function cellText(row: Record<string, unknown>, names: string[]) {
@@ -112,6 +113,7 @@ export function AdminApp() {
         unit: cellText(item, ["單位"]),
         electionGroup: "",
         incumbent: false,
+        formerMember: false,
       })).filter((row) => row.name || row.employeeNumber || row.department || row.unit);
 
       if (!masterRows.length) throw new Error("「清冊」工作表沒有員工資料");
@@ -135,9 +137,16 @@ export function AdminApp() {
       const summaries: ImportGroupSummary[] = [];
 
       for (const groupName of groupSheetNames) {
-        const groupRaw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[groupName], { defval: "" });
+        const groupSheet = workbook.Sheets[groupName];
+        const headerRow = XLSX.utils.sheet_to_json<unknown[]>(groupSheet, { header: 1, range: 0, blankrows: false })[0] ?? [];
+        const groupHeaders = new Set(headerRow.map((value) => String(value ?? "").trim()));
+        const missingColumns = ["部門", "單位", "員編", "中文姓名", "現任", "當過"].filter((column) => !groupHeaders.has(column));
+        if (missingColumns.length) issues.push(`「${groupName}」缺少欄位：${missingColumns.join("、")}`);
+
+        const groupRaw = XLSX.utils.sheet_to_json<Record<string, unknown>>(groupSheet, { defval: "" });
         const seenInGroup = new Set<string>();
         let incumbents = 0;
+        let formerMembers = 0;
 
         for (const item of groupRaw) {
           const employeeNumber = cellText(item, ["員編", "員工編號"]);
@@ -172,11 +181,13 @@ export function AdminApp() {
           }
 
           const incumbent = truthy(item["現任"] ?? item["是否現任福委"] ?? item["現任福委"]);
+          const formerMember = truthy(item["當過"] ?? item["是否當過福委"] ?? item["曾任福委"]);
           if (incumbent) incumbents += 1;
+          if (formerMember) formerMembers += 1;
           membership.set(employeeNumber, groupName);
-          assigned.set(employeeNumber, { ...master, electionGroup: groupName, incumbent });
+          assigned.set(employeeNumber, { ...master, electionGroup: groupName, incumbent, formerMember });
         }
-        summaries.push({ name: groupName, count: seenInGroup.size, incumbents });
+        summaries.push({ name: groupName, count: seenInGroup.size, incumbents, formerMembers });
       }
 
       for (const [employeeNumber, master] of masterById) {
@@ -278,8 +289,8 @@ export function AdminApp() {
     ]), "清冊");
     const groupNames = ["餐飲", "廚務", "房務", "客務", "後勤", "管理部", "休開", "工程部"];
     for (const groupName of groupNames) {
-      const rows = [["部門", "單位", "員編", "中文姓名", "現任"]];
-      if (groupName === "餐飲") rows.push(["營運部", "行政組", "E0001", "王小明", "v"]);
+      const rows = [["部門", "單位", "員編", "中文姓名", "現任", "當過"]];
+      if (groupName === "餐飲") rows.push(["營運部", "行政組", "E0001", "王小明", "v", ""]);
       XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), groupName);
     }
     XLSX.writeFile(book, "福委改選分組名單範本.xlsx");
@@ -289,7 +300,8 @@ export function AdminApp() {
     if (!dashboard) return;
     const records = dashboard.candidates.map((candidate) => ({
       選舉分組: candidate.electionGroup, 部門: candidate.department, 單位: candidate.unit, 姓名: candidate.name,
-      員工編號: candidate.employeeNumber, 是否現任福委: candidate.incumbent ? "是" : "否", 得票數: candidate.votes,
+      員工編號: candidate.employeeNumber, 是否現任福委: candidate.incumbent ? "是" : "否",
+      是否當過福委: candidate.formerMember ? "是" : "否", 得票數: candidate.votes,
     }));
     const sheet = XLSX.utils.json_to_sheet(records);
     const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, "開票結果");
@@ -377,13 +389,13 @@ export function AdminApp() {
                 <input type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && parseExcel(event.target.files[0])} />
                 <span className="upload-icon">⇧</span><strong>{fileName || "選擇 Excel 名單"}</strong><small>點擊選擇檔案，名單不會在確認前寫入系統</small>
               </label>
-              <div className="required-columns"><span>清冊欄位</span>{["部門", "單位", "員編", "中文姓名"].map((column) => <b key={column}>{column}</b>)}<span>分組頁籤另加</span><b>現任</b></div>
+              <div className="required-columns"><span>清冊欄位</span>{["部門", "單位", "員編", "中文姓名"].map((column) => <b key={column}>{column}</b>)}<span>分組頁籤另加</span><b>現任</b><b>當過</b></div>
             </section>
             {rows.length > 0 && <section className="admin-card preview-card">
               <div className="panel-heading"><div><p className="section-kicker">IMPORT PREVIEW</p><h2>匯入預覽</h2><p>共讀取 {rows.length} 筆、{importGroups.length} 個選舉分組，以下顯示前 8 筆。</p></div><button className="primary-button" disabled={busy || importIssues.length > 0} onClick={importRows}>{busy ? "匯入中…" : importIssues.length ? "請先修正資料" : `確認匯入 ${rows.length} 筆`}</button></div>
-              <div className="import-summary">{importGroups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>{group.count} 人</span><small>現任 {group.incumbents} 人</small></div>)}</div>
+              <div className="import-summary">{importGroups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>{group.count} 人</span><small>現任 {group.incumbents} 人・曾任 {group.formerMembers} 人</small></div>)}</div>
               {importIssues.length > 0 && <div className="import-issues" role="alert"><strong>發現 {importIssues.length} 個問題，尚未匯入</strong><ul>{importIssues.slice(0, 30).map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}</ul>{importIssues.length > 30 && <p>另有 {importIssues.length - 30} 個問題未顯示。</p>}</div>}
-              <div className="preview-table"><div className="preview-row preview-head"><span>姓名</span><span>員工編號</span><span>部門</span><span>單位</span><span>選舉分組</span><span>現任</span></div>{rows.slice(0, 8).map((row, index) => <div className="preview-row" key={`${row.employeeNumber}-${index}`}><span>{row.name || "—"}</span><span>{row.employeeNumber || "—"}</span><span>{row.department || "—"}</span><span>{row.unit || "—"}</span><span>{row.electionGroup || "未分組"}</span><span>{row.incumbent ? "是" : "否"}</span></div>)}</div>
+              <div className="preview-table"><div className="preview-row preview-head"><span>姓名</span><span>員工編號</span><span>部門</span><span>單位</span><span>選舉分組</span><span>現任</span><span>當過</span></div>{rows.slice(0, 8).map((row, index) => <div className="preview-row" key={`${row.employeeNumber}-${index}`}><span>{row.name || "—"}</span><span>{row.employeeNumber || "—"}</span><span>{row.department || "—"}</span><span>{row.unit || "—"}</span><span>{row.electionGroup || "未分組"}</span><span>{row.incumbent ? "是" : "否"}</span><span>{row.formerMember ? "是" : "否"}</span></div>)}</div>
             </section>}
           </div>
         )}
@@ -392,14 +404,16 @@ export function AdminApp() {
           <div className="admin-panel-stack">
             <section className="results-header"><div><p className="section-kicker">LIVE RESULTS</p><h2>即時票數</h2><p>票數僅供管理者查看；結果不顯示個別員工的投票選擇。</p></div><button className="secondary-button" onClick={exportResults}>匯出開票結果</button></section>
             {Array.from(groupedResults, ([key, candidates]) => {
-              const max = Math.max(0, ...candidates.map((candidate) => Number(candidate.votes)));
-              const leaders = candidates.filter((candidate) => Number(candidate.votes) === max && max > 0);
+              const eligibleCandidates = candidates.filter((candidate) => !candidate.incumbent && !candidate.formerMember);
+              const max = Math.max(0, ...eligibleCandidates.map((candidate) => Number(candidate.votes)));
+              const leaders = eligibleCandidates.filter((candidate) => Number(candidate.votes) === max && max > 0);
               const tied = leaders.length > 1;
               return <section className="admin-card result-group" key={key}>
-                <div className="result-group-title"><div><p>{candidates.length} 位候選人</p><h3>{key}</h3></div>{tied && <span className="tie-badge">最高票同票・待管理者處理</span>}</div>
+                <div className="result-group-title"><div><p>{eligibleCandidates.length} 位可選／{candidates.length} 位名單</p><h3>{key}</h3></div>{tied && <span className="tie-badge">最高票同票・待管理者處理</span>}</div>
                 <div className="result-list">{candidates.map((candidate, index) => {
-                  const votes = Number(candidate.votes); const leader = votes === max && max > 0;
-                  return <div className={`result-row ${leader ? "leader" : ""}`} key={candidate.id}><span className="rank">{String(index + 1).padStart(2, "0")}</span><span className="result-person"><strong>{candidate.name}</strong><small>{candidate.employeeNumber}{candidate.incumbent ? " · 現任福委" : ""}</small></span><span className="vote-bar"><i><b style={{ width: max ? `${(votes / max) * 100}%` : "0%" }} /></i></span><strong className="vote-number">{votes}<small>票</small></strong>{leader && <span className="leader-label">最高票</span>}</div>;
+                  const votes = Number(candidate.votes);
+                  const leader = !candidate.incumbent && !candidate.formerMember && votes === max && max > 0;
+                  return <div className={`result-row ${leader ? "leader" : ""}`} key={candidate.id}><span className="rank">{String(index + 1).padStart(2, "0")}</span><span className="result-person"><strong>{candidate.name}</strong><small>{candidate.employeeNumber}{candidate.incumbent ? " · 現任福委" : candidate.formerMember ? " · 曾任福委" : ""}</small></span><span className="vote-bar"><i><b style={{ width: max ? `${(votes / max) * 100}%` : "0%" }} /></i></span><strong className="vote-number">{votes}<small>票</small></strong>{leader && <span className="leader-label">最高票</span>}</div>;
                 })}</div>
               </section>;
             })}
