@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
   const candidates = await db.prepare(
     `SELECT id, name, employee_number AS employeeNumber, incumbent, former_member AS formerMember
-     FROM employees WHERE election_group = ? ORDER BY (incumbent = 1 OR former_member = 1) DESC, name`,
+     FROM employees WHERE election_group = ? ORDER BY employee_number ASC`,
   ).bind(voter.electionGroup).all<{
     id: number;
     name: string;
