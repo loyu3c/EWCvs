@@ -2,13 +2,19 @@ import { ensureSchema, getDatabase } from "@/lib/database";
 import { error, json } from "@/lib/responses";
 import { getAdminSession } from "@/lib/session";
 
-type ResetScope = "test" | "all";
+type ResetScope = "test" | "votes" | "all";
 
 export async function POST(request: Request) {
   await ensureSchema();
   if (!(await getAdminSession(request))) return error("請先登入管理後台", 401);
   const body = (await request.json()) as { scope?: ResetScope; confirmation?: string };
-  const expected = body.scope === "test" ? "清空測試資料" : body.scope === "all" ? "清空全部資料" : "";
+  const expected = body.scope === "test"
+    ? "清空測試資料"
+    : body.scope === "votes"
+      ? "清空投票資料"
+      : body.scope === "all"
+        ? "清空全部資料"
+        : "";
   if (!expected || body.confirmation !== expected) return error(`請完整輸入「${expected || "確認文字"}」`);
 
   const db = getDatabase();
@@ -31,6 +37,18 @@ export async function POST(request: Request) {
         .bind(`${testCount?.count ?? 0} employees`, now),
     ]);
     return json({ ok: true, count: testCount?.count ?? 0 });
+  }
+
+  if (body.scope === "votes") {
+    const voteCount = await db.prepare("SELECT COUNT(*) AS count FROM votes").first<{ count: number }>();
+    await db.batch([
+      db.prepare("DELETE FROM votes"),
+      db.prepare("DELETE FROM audit_logs WHERE action = 'vote_cast'"),
+      db.prepare("UPDATE election_settings SET status = 'setup', updated_at = ? WHERE id = 1").bind(now),
+      db.prepare("INSERT INTO audit_logs (action, details, created_at) VALUES ('vote_data_cleared', ?, ?)")
+        .bind(`${voteCount?.count ?? 0} votes; employees preserved`, now),
+    ]);
+    return json({ ok: true, count: voteCount?.count ?? 0 });
   }
 
   const total = await db.prepare("SELECT COUNT(*) AS count FROM employees").first<{ count: number }>();

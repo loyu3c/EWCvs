@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
 type Status = "setup" | "open" | "paused" | "closed";
+type ResetScope = "test" | "votes" | "all";
 type ImportRow = {
   name: string;
   employeeNumber: string;
@@ -25,6 +26,23 @@ type Dashboard = {
 };
 
 const statusLabel: Record<Status, string> = { setup: "籌備中", open: "投票中", paused: "已暫停", closed: "已結束" };
+const resetCopy: Record<ResetScope, { title: string; description: string; confirmation: string }> = {
+  test: {
+    title: "清空測試資料？",
+    description: "所有 TEST 開頭的員工及相關選票將被刪除。",
+    confirmation: "清空測試資料",
+  },
+  votes: {
+    title: "只清空投票資料？",
+    description: "所有選票、完成編號、票數統計及投票送出紀錄將被刪除；員工名單、選舉分組及候選資格都會保留。",
+    confirmation: "清空投票資料",
+  },
+  all: {
+    title: "清空全部資料？",
+    description: "所有員工、選票與統計資料都將被永久刪除。",
+    confirmation: "清空全部資料",
+  },
+};
 
 async function readJson(response: Response) {
   const data = (await response.json()) as Record<string, unknown>;
@@ -60,7 +78,7 @@ export function AdminApp() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordChanged, setPasswordChanged] = useState(false);
-  const [resetScope, setResetScope] = useState<"test" | "all" | null>(null);
+  const [resetScope, setResetScope] = useState<ResetScope | null>(null);
   const [resetConfirmation, setResetConfirmation] = useState("");
 
   const loadDashboard = useCallback(async (silent = false) => {
@@ -265,7 +283,13 @@ export function AdminApp() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ scope: resetScope, confirmation: resetConfirmation }),
       }));
-      setMessage(resetScope === "test" ? `已清除 ${data.count} 筆測試資料` : `已清除全部 ${data.count} 筆員工資料`);
+      setMessage(
+        resetScope === "test"
+          ? `已清除 ${data.count} 筆測試資料`
+          : resetScope === "votes"
+            ? `已清除 ${data.count} 筆投票資料，員工名單已保留`
+            : `已清除全部 ${data.count} 筆員工資料`,
+      );
       setResetScope(null); setResetConfirmation(""); await loadDashboard();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "資料清除失敗"); }
     finally { setBusy(false); }
@@ -428,7 +452,7 @@ export function AdminApp() {
               const actionLabel: Record<string, string> = {
                 employee_import: "匯入員工名單", status_change: "調整投票狀態", vote_cast: "收到一張選票",
                 admin_password_changed: "修改管理密碼", test_data_generated: "產生測試資料",
-                test_data_cleared: "清空測試資料", all_data_cleared: "清空全部資料",
+                test_data_cleared: "清空測試資料", vote_data_cleared: "清空投票資料", all_data_cleared: "清空全部資料",
               };
               return <div className="log-item" key={`${log.createdAt}-${index}`}><span className="log-dot" /><div><strong>{actionLabel[log.action] ?? log.action}</strong><small>{new Date(log.createdAt).toLocaleString("zh-TW", { hour12: false })}</small></div><span>{log.action === "vote_cast" ? "投票成功" : log.details}</span></div>;
             })}</div>
@@ -461,6 +485,14 @@ export function AdminApp() {
 
               <section className="admin-card tool-card danger-card">
                 <span className="tool-index">03</span>
+                <div><p className="section-kicker">RESET VOTES</p><h2>只清空投票資料</h2><p>刪除選票、完成編號、票數統計及投票送出紀錄，但保留員工名單、選舉分組及候選資格。</p></div>
+                <div className="danger-note">清空後，所有員工會恢復為尚未投票，選舉狀態重設為籌備中。</div>
+                <button className="danger-button" disabled={busy || dashboard.settings.status === "open" || dashboard.totals.votes === 0} onClick={() => { setResetScope("votes"); setResetConfirmation(""); }}>只清空投票資料</button>
+                {dashboard.settings.status === "open" && <p className="tool-hint">請先暫停或結束投票。</p>}
+              </section>
+
+              <section className="admin-card tool-card danger-card">
+                <span className="tool-index">04</span>
                 <div><p className="section-kicker">DANGER ZONE</p><h2>清空全部資料</h2><p>刪除所有員工名單、選票與操作紀錄，並將選舉重設為籌備中。</p></div>
                 <div className="danger-note">此動作無法復原。正式資料清除前，請先匯出開票結果。</div>
                 <button className="danger-button" disabled={busy || dashboard.settings.status === "open" || dashboard.totals.employees === 0} onClick={() => { setResetScope("all"); setResetConfirmation(""); }}>清空全部資料</button>
@@ -475,12 +507,12 @@ export function AdminApp() {
         <div className="modal-backdrop" role="presentation">
           <div className="confirm-modal reset-modal" role="dialog" aria-modal="true" aria-labelledby="reset-title">
             <p className="eyebrow">DESTRUCTIVE ACTION</p>
-            <h2 id="reset-title">{resetScope === "test" ? "清空測試資料？" : "清空全部資料？"}</h2>
-            <p>{resetScope === "test" ? "所有 TEST 開頭的員工及相關選票將被刪除。" : "所有員工、選票與統計資料都將被永久刪除。"}</p>
-            <label><span>請輸入「{resetScope === "test" ? "清空測試資料" : "清空全部資料"}」確認</span><input autoFocus value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label>
+            <h2 id="reset-title">{resetCopy[resetScope].title}</h2>
+            <p>{resetCopy[resetScope].description}</p>
+            <label><span>請輸入「{resetCopy[resetScope].confirmation}」確認</span><input autoFocus value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label>
             <div className="modal-actions">
               <button className="secondary-button" disabled={busy} onClick={() => { setResetScope(null); setResetConfirmation(""); }}>取消</button>
-              <button className="danger-button" disabled={busy || resetConfirmation !== (resetScope === "test" ? "清空測試資料" : "清空全部資料")} onClick={resetData}>{busy ? "處理中…" : "確認清空"}</button>
+              <button className="danger-button" disabled={busy || resetConfirmation !== resetCopy[resetScope].confirmation} onClick={resetData}>{busy ? "處理中…" : "確認清空"}</button>
             </div>
           </div>
         </div>
